@@ -1,0 +1,6 @@
+title = "shopsphere gitleaks"
+[extend]
+useDefault = true
+[allowlist]
+description = "placeholders only"
+regexes = ['''__[A-Z_]+__''']

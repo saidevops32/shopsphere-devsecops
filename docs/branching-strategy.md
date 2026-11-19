@@ -1,0 +1,2 @@
+# Branching and change management
+Trunk-based: short-lived `feature/*` -> PR to `main`. Branch policy: 1+ reviewer, CI passing (scans + tests), CODEOWNERS review for `infra/`, `pipelines/`, `k8s/policies/`, signed commits, no force-push. Releases = immutable image tags; promotion dev -> qa (approval) -> prod (approval + manual ArgoCD sync). Emergency fix: hotfix PR with expedited review, then post-incident review. Infra changes always via PR -> plan artifact -> approval -> apply.

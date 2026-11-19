@@ -1,0 +1,7 @@
+# CI pipeline updates the tag lines below (GitOps). Do not edit by hand.
+global: { env: dev }
+ingress: { host: "dev.__INGRESS_IP__.nip.io" }
+services:
+  frontend: { tag: "0.0.0" }
+  backend-api: { tag: "0.0.0" }
+  auth-service: { tag: "0.0.0" }

@@ -1,0 +1,4 @@
+framework: [terraform]
+soft-fail: true     # learning mode; flip to false and add skip-check list when ready
+quiet: true
+compact: true

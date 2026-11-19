@@ -1,0 +1,23 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: shopsphere-prod
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: __GH_REPO_URL__
+    targetRevision: main
+    path: k8s/helm/shopsphere
+    helm:
+      valueFiles: [values.yaml, values-prod.yaml]
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: shopsphere-prod
+  syncPolicy:
+    # prod: no 'automated' block -> a human clicks SYNC in ArgoCD (manual gate)
+    syncOptions: [CreateNamespace=true]
+    managedNamespaceMetadata:
+      labels:
+        pod-security.kubernetes.io/enforce: restricted
+        pod-security.kubernetes.io/warn: restricted

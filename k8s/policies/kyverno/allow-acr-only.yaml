@@ -1,0 +1,12 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata: { name: allow-acr-only }
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: images-from-our-acr
+      match: { any: [{ resources: { kinds: [Pod], namespaces: ["shopsphere-*"] } }] }
+      validate:
+        message: "Images must come from our private ACR (__ACR_LOGIN_SERVER__)."
+        pattern: { spec: { containers: [{ image: "__ACR_LOGIN_SERVER__/*" }] } }

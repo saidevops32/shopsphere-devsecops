@@ -1,0 +1,6 @@
+global: { env: prod }
+ingress: { host: "prod.__INGRESS_IP__.nip.io" }
+services:
+  frontend:     { tag: "0.0.0", replicas: 2, hpa: { enabled: true, min: 2, max: 4, cpu: 70 } }
+  backend-api:  { tag: "0.0.0", replicas: 2, hpa: { enabled: true, min: 2, max: 4, cpu: 70 } }
+  auth-service: { tag: "0.0.0", replicas: 2, hpa: { enabled: true, min: 2, max: 3, cpu: 70 } }

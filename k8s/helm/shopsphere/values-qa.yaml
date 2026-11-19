@@ -1,0 +1,6 @@
+global: { env: qa }
+ingress: { host: "qa.__INGRESS_IP__.nip.io" }
+services:
+  frontend: { tag: "0.0.0" }
+  backend-api: { tag: "0.0.0" }
+  auth-service: { tag: "0.0.0" }

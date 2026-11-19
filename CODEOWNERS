@@ -1,0 +1,5 @@
+# Replace with real GitHub/Entra groups
+/infra/       @platform-team
+/pipelines/   @platform-team @security-team
+/k8s/policies/ @security-team
+/app/         @dev-team

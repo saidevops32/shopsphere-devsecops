@@ -1,0 +1,125 @@
+# language: node | python | static
+# Reusable CI stages: Scan -> Test -> Build/Scan/Push/GitOps-bump
+parameters:
+  - name: serviceName
+    type: string
+  - name: language          # node | python
+    type: string
+  - name: signImage         # needs cosign key in Key Vault + role for the service connection
+    type: boolean
+    default: false
+
+stages:
+  - stage: Scan
+    displayName: Security scans
+    jobs:
+      - job: Gitleaks
+        displayName: Secret scan (Gitleaks)
+        pool: { vmImage: ubuntu-latest }
+        steps:
+          - checkout: self
+            fetchDepth: 0
+          - bash: docker run --rm -v "$(Build.SourcesDirectory):/repo" $(gitleaksImage) detect --source /repo --config /repo/.gitleaks.toml --redact --no-banner
+            displayName: Gitleaks (fails on secrets)
+      - job: Semgrep
+        displayName: SAST (Semgrep)
+        pool: { vmImage: ubuntu-latest }
+        steps:
+          - checkout: self
+          - bash: docker run --rm -v "$(Build.SourcesDirectory):/src" $(semgrepImage) semgrep scan --config p/ci --error --metrics=off /src/app/${{ parameters.serviceName }}
+            displayName: Semgrep
+      - job: Hadolint
+        displayName: Dockerfile lint
+        pool: { vmImage: ubuntu-latest }
+        steps:
+          - checkout: self
+          - bash: docker run --rm -i $(hadolintImage) hadolint --failure-threshold error - < app/${{ parameters.serviceName }}/Dockerfile
+            displayName: Hadolint (tighten to 'warning' later)
+
+  - stage: Test
+    displayName: Unit tests + dependency scan (SCA)
+    dependsOn: []
+    jobs:
+      - job: Test
+        pool: { vmImage: ubuntu-latest }
+        steps:
+          - checkout: self
+          - ${{ if eq(parameters.language, 'node') }}:
+              - task: NodeTool@0
+                inputs: { versionSpec: '20.x' }
+              - bash: |
+                  cd app/${{ parameters.serviceName }}
+                  npm install
+                  npm test
+                  npm audit --audit-level=high
+                displayName: npm test + npm audit (fails on HIGH+)
+          - ${{ if eq(parameters.language, 'static') }}:
+              - bash: echo "Static frontend - no unit tests. Add npm test here once you add a React build."
+                displayName: No unit tests (static)
+          - ${{ if eq(parameters.language, 'python') }}:
+              - task: UsePythonVersion@0
+                inputs: { versionSpec: '3.12' }
+              - bash: |
+                  cd app/${{ parameters.serviceName }}
+                  pip install -r requirements.txt -r requirements-dev.txt
+                  python -m pytest -q
+                  pip-audit -r requirements.txt
+                displayName: pytest + pip-audit
+
+  - stage: Build
+    displayName: Build, image scan, push, GitOps bump
+    dependsOn: [Scan, Test]
+    jobs:
+      - job: BuildPush
+        pool: { vmImage: ubuntu-latest }
+        steps:
+          - checkout: self
+          - bash: |
+              TAG="$(Build.BuildId)-${BUILD_SOURCEVERSION:0:7}"
+              echo "##vso[task.setvariable variable=imageTag]$TAG"
+              echo "##vso[task.setvariable variable=image]$(acrLoginServer)/shopsphere/${{ parameters.serviceName }}:$TAG"
+            displayName: Compute immutable tag (no 'latest')
+          - bash: docker build -t "$(image)" app/${{ parameters.serviceName }}
+            displayName: Docker build
+          - bash: |
+              mkdir -p $HOME/.cache/trivy
+              docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v $HOME/.cache/trivy:/root/.cache/ \
+                -v "$(Build.SourcesDirectory)/security:/cfg" $(trivyImage) image \
+                --severity HIGH,CRITICAL --exit-code 1 --ignore-unfixed --ignorefile /cfg/trivyignore "$(image)"
+            displayName: Trivy image scan (fail on HIGH/CRITICAL)
+          - bash: |
+              docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v $HOME/.cache/trivy:/root/.cache/ \
+                -v "$(Build.ArtifactStagingDirectory):/out" $(trivyImage) image --format cyclonedx \
+                --output /out/sbom-${{ parameters.serviceName }}.json "$(image)"
+            displayName: Generate SBOM (CycloneDX)
+          - task: PublishBuildArtifacts@1
+            inputs: { PathtoPublish: '$(Build.ArtifactStagingDirectory)', ArtifactName: 'sbom' }
+          - task: AzureCLI@2
+            displayName: Push to ACR
+            condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+            inputs:
+              azureSubscription: $(azureServiceConnection)
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                az acr login --name $(acrName)
+                docker push "$(image)"
+          - ${{ if eq(parameters.signImage, true) }}:
+              - task: AzureCLI@2
+                displayName: Sign image (cosign + Key Vault key)
+                condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+                inputs:
+                  azureSubscription: $(azureServiceConnection)
+                  scriptType: bash
+                  scriptLocation: inlineScript
+                  inlineScript: |
+                    curl -sSLo cosign https://github.com/sigstore/cosign/releases/download/v2.4.1/cosign-linux-amd64
+                    chmod +x cosign
+                    az acr login --name $(acrName)
+                    ./cosign sign --yes --key azurekms://$(kvName).vault.azure.net/cosign "$(image)"
+          - bash: bash scripts/bump-tag.sh k8s/helm/shopsphere/values-dev.yaml ${{ parameters.serviceName }} "$(imageTag)"
+            displayName: GitOps - bump dev image tag in Git
+            condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+            env:
+              GH_PAT: $(GH_PAT)
+              GH_REPO: $(ghRepo)

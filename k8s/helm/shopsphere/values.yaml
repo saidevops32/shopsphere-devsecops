@@ -1,0 +1,61 @@
+global:
+  registry: __ACR_LOGIN_SERVER__
+  env: dev
+workloadIdentity:
+  clientId: __AUTH_CLIENT_ID__
+keyVault:
+  name: __KV_NAME__
+  tenantId: __TENANT_ID__
+ingress:
+  enabled: true
+  className: nginx
+  host: ""            # set per env: <env>.<INGRESS_IP>.nip.io
+db:
+  enabled: false      # true -> allow backend egress to Postgres subnet
+  cidr: 10.10.4.0/24
+quota:
+  requestsCpu: "2"
+  requestsMemory: 2Gi
+  limitsCpu: "4"
+  limitsMemory: 4Gi
+  pods: "30"
+services:
+  frontend:
+    image: shopsphere/frontend
+    tag: "0.0.0"
+    port: 8080
+    replicas: 1
+    probes: { startup: /healthz, ready: /healthz, live: /healthz }
+    resources:
+      requests: { cpu: 25m, memory: 32Mi }
+      limits: { cpu: 100m, memory: 64Mi }
+    hpa: { enabled: false, min: 1, max: 3, cpu: 70 }
+    env: []
+  backend-api:
+    image: shopsphere/backend-api
+    tag: "0.0.0"
+    port: 3000
+    replicas: 1
+    probes: { startup: /health/startup, ready: /health/ready, live: /health/live }
+    resources:
+      requests: { cpu: 50m, memory: 64Mi }
+      limits: { cpu: 250m, memory: 128Mi }
+    hpa: { enabled: false, min: 1, max: 4, cpu: 70 }
+    env:
+      - { name: AUTH_URL, value: "http://auth-service:8000" }
+      - { name: ENABLE_FAULT_INJECTION, value: "false" }
+  auth-service:
+    image: shopsphere/auth-service
+    tag: "0.0.0"
+    port: 8000
+    replicas: 1
+    workloadIdentity: true
+    secretsCsi: true
+    probes: { startup: /health/startup, ready: /health/ready, live: /health/live }
+    resources:
+      requests: { cpu: 50m, memory: 96Mi }
+      limits: { cpu: 250m, memory: 192Mi }
+    hpa: { enabled: false, min: 1, max: 3, cpu: 70 }
+    env:
+      - { name: JWT_SECRET_FILE, value: /mnt/secrets/jwt-secret }
+      - { name: DEMO_PASSWORD_FILE, value: /mnt/secrets/demo-password }

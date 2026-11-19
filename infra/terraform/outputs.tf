@@ -1,0 +1,10 @@
+output "resource_group"      { value = azurerm_resource_group.rg.name }
+output "aks_name"            { value = azurerm_kubernetes_cluster.aks.name }
+output "acr_name"            { value = azurerm_container_registry.acr.name }
+output "acr_login_server"    { value = azurerm_container_registry.acr.login_server }
+output "acr_id"              { value = azurerm_container_registry.acr.id }
+output "key_vault_name"      { value = azurerm_key_vault.kv.name }
+output "tenant_id"           { value = data.azurerm_client_config.current.tenant_id }
+output "auth_client_id"      { value = azurerm_user_assigned_identity.auth.client_id }
+output "log_analytics_name"  { value = azurerm_log_analytics_workspace.law.name }
+output "demo_password_hint"  { value = "az keyvault secret show --vault-name ${azurerm_key_vault.kv.name} -n demo-password --query value -o tsv" }

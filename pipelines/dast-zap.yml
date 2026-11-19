@@ -1,0 +1,17 @@
+# Manual: OWASP ZAP baseline (passive) scan against a running env, e.g. http://qa.<IP>.nip.io
+trigger: none
+parameters:
+  - name: targetUrl
+    type: string
+variables:
+  - template: templates/vars.yml
+pool: { vmImage: ubuntu-latest }
+steps:
+  - checkout: self
+  - bash: |
+      mkdir -p zap && chmod 777 zap
+      docker run --rm -v "$PWD/zap:/zap/wrk:rw" $(zapImage) zap-baseline.py -t "${{ parameters.targetUrl }}" -r report.html -I
+    displayName: ZAP baseline scan
+  - task: PublishBuildArtifacts@1
+    condition: always()
+    inputs: { PathtoPublish: zap, ArtifactName: zap-report }

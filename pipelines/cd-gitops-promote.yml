@@ -1,0 +1,29 @@
+# Manual run: promotes the image tags currently in values-dev.yaml to qa or prod (GitOps commit).
+# ArgoCD then syncs. Environments 'qa' and 'prod' carry Approval checks.
+trigger: none
+parameters:
+  - name: targetEnv
+    type: string
+    values: [qa, prod]
+variables:
+  - template: templates/vars.yml
+  - group: shopsphere-secrets
+pool: { vmImage: ubuntu-latest }
+stages:
+  - stage: Promote
+    jobs:
+      - deployment: Promote
+        environment: ${{ parameters.targetEnv }}
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                - bash: |
+                    for svc in frontend backend-api auth-service; do
+                      TAG=$(yq ".services[\"$svc\"].tag" k8s/helm/shopsphere/values-dev.yaml)
+                      echo "Promoting $svc:$TAG -> ${{ parameters.targetEnv }}"
+                      bash scripts/bump-tag.sh k8s/helm/shopsphere/values-${{ parameters.targetEnv }}.yaml "$svc" "$TAG"
+                    done
+                  displayName: Copy dev tags to ${{ parameters.targetEnv }}
+                  env: { GH_PAT: $(GH_PAT), GH_REPO: $(ghRepo) }

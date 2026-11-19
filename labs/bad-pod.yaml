@@ -1,0 +1,9 @@
+# Should be REJECTED by Kyverno (latest tag, non-ACR image, privileged, no limits)
+apiVersion: v1
+kind: Pod
+metadata: { name: bad-pod, labels: { app: bad } }
+spec:
+  containers:
+    - name: bad
+      image: nginx:latest
+      securityContext: { privileged: true }

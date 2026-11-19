@@ -1,0 +1,44 @@
+trigger:
+  branches: { include: [main] }
+  paths: { include: [infra/terraform/*] }
+pr:
+  paths: { include: [infra/terraform/*] }
+variables:
+  - template: templates/vars.yml
+  - name: ENV_NAME
+    value: dev
+pool: { vmImage: ubuntu-latest }
+stages:
+  - stage: Validate
+    jobs:
+      - job: Validate
+        steps:
+          - checkout: self
+          - bash: |
+              curl -sSLo /tmp/tf.zip https://releases.hashicorp.com/terraform/$(tfVersion)/terraform_$(tfVersion)_linux_amd64.zip
+              sudo unzip -o /tmp/tf.zip -d /usr/local/bin
+              cd infra/terraform && terraform fmt -check -recursive && terraform init -backend=false && terraform validate
+            displayName: terraform fmt + validate
+          - bash: docker run --rm -v "$(Build.SourcesDirectory):/src" $(checkovImage) --directory /src/infra/terraform --config-file /src/security/checkov.yaml
+            displayName: Checkov IaC scan (soft-fail while learning)
+  - stage: Plan
+    dependsOn: Validate
+    jobs:
+      - job: Plan
+        steps:
+          - template: templates/steps-terraform.yml
+            parameters: { action: plan }
+          - task: PublishPipelineArtifact@1
+            inputs: { targetPath: '$(Build.ArtifactStagingDirectory)/tfplan', artifact: tfplan }
+  - stage: Apply
+    dependsOn: Plan
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - deployment: Apply
+        environment: infra-dev       # add an Approval check on this environment
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - template: templates/steps-terraform.yml
+                  parameters: { action: apply }

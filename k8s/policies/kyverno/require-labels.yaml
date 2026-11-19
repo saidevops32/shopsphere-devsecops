@@ -1,0 +1,12 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata: { name: require-app-label }
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: need-app-label
+      match: { any: [{ resources: { kinds: [Deployment], namespaces: ["shopsphere-*"] } }] }
+      validate:
+        message: "Deployments must have metadata.labels.app."
+        pattern: { metadata: { labels: { app: "?*" } } }

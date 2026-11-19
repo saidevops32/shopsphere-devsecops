@@ -1,0 +1,29 @@
+parameters:
+  - name: action          # plan | apply
+    type: string
+steps:
+  - checkout: self
+  - bash: |
+      curl -sSLo /tmp/tf.zip https://releases.hashicorp.com/terraform/$(tfVersion)/terraform_$(tfVersion)_linux_amd64.zip
+      sudo unzip -o /tmp/tf.zip -d /usr/local/bin && terraform version
+    displayName: Install Terraform $(tfVersion)
+  - task: AzureCLI@2
+    displayName: terraform ${{ parameters.action }} (OIDC, no stored secrets)
+    inputs:
+      azureSubscription: $(azureServiceConnection)
+      addSpnToEnvironment: true
+      scriptType: bash
+      scriptLocation: inlineScript
+      workingDirectory: infra/terraform
+      inlineScript: |
+        export ARM_USE_OIDC=true ARM_CLIENT_ID=$servicePrincipalId ARM_OIDC_TOKEN=$idToken ARM_TENANT_ID=$tenantId
+        export ARM_SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+        export TF_VAR_admin_object_id=$(adminObjectId)
+        terraform init -input=false \
+          -backend-config="resource_group_name=$(tfstateRg)" -backend-config="storage_account_name=$(tfstateSa)" \
+          -backend-config="container_name=tfstate" -backend-config="key=$(ENV_NAME).tfstate"
+        if [ "${{ parameters.action }}" = "plan" ]; then
+          terraform plan -input=false -var-file=envs/$(ENV_NAME).tfvars -out=$(Build.ArtifactStagingDirectory)/tfplan
+        else
+          terraform apply -input=false -parallelism=1 $(Pipeline.Workspace)/tfplan/tfplan
+        fi

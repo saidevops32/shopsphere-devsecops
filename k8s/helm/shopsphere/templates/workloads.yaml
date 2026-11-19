@@ -1,0 +1,144 @@
+{{- range $name, $svc := .Values.services }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}-sa
+  labels:
+    app: {{ $name }}
+    {{- include "shopsphere.labels" $ | nindent 4 }}
+  {{- if $svc.workloadIdentity }}
+  annotations:
+    azure.workload.identity/client-id: {{ $.Values.workloadIdentity.clientId | quote }}
+  {{- end }}
+# Only pods that need a token (workload identity) get one mounted
+automountServiceAccountToken: {{ if $svc.workloadIdentity }}true{{ else }}false{{ end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  labels:
+    app: {{ $name }}
+    {{- include "shopsphere.labels" $ | nindent 4 }}
+spec:
+  {{- if not (and $svc.hpa $svc.hpa.enabled) }}
+  replicas: {{ $svc.replicas }}
+  {{- end }}
+  revisionHistoryLimit: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }   # zero-downtime rollouts
+  selector:
+    matchLabels:
+      app: {{ $name }}
+  template:
+    metadata:
+      labels:
+        app: {{ $name }}
+        {{- include "shopsphere.labels" $ | nindent 8 }}
+        {{- if $svc.workloadIdentity }}
+        azure.workload.identity/use: "true"
+        {{- end }}
+    spec:
+      serviceAccountName: {{ $name }}-sa
+      terminationGracePeriodSeconds: 30
+      securityContext:                       # Pod Security Standard: restricted
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels: { app: {{ $name }} }
+      containers:
+        - name: {{ $name }}
+          image: "{{ $.Values.global.registry }}/{{ $svc.image }}:{{ $svc.tag }}"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - { name: http, containerPort: {{ $svc.port }} }
+          {{- with $svc.env }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          resources:
+            {{- toYaml $svc.resources | nindent 12 }}
+          # startup: gives slow starts up to 30*2s=60s before liveness begins (prevents restart loops)
+          startupProbe:
+            httpGet: { path: {{ $svc.probes.startup }}, port: http }
+            periodSeconds: 2
+            failureThreshold: 30
+          # readiness: remove from Service endpoints when not ready (no restart)
+          readinessProbe:
+            httpGet: { path: {{ $svc.probes.ready }}, port: http }
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          # liveness: restart only when truly stuck; keep it cheap and independent of dependencies
+          livenessProbe:
+            httpGet: { path: {{ $svc.probes.live }}, port: http }
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+            {{- if $svc.secretsCsi }}
+            - { name: secrets, mountPath: /mnt/secrets, readOnly: true }
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: { sizeLimit: 64Mi }
+        {{- if $svc.secretsCsi }}
+        - name: secrets
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes: { secretProviderClass: shopsphere-kv }
+        {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  labels:
+    app: {{ $name }}
+spec:
+  selector:
+    app: {{ $name }}
+  ports:
+    - { name: http, port: {{ $svc.port }}, targetPort: http }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $name }}
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: {{ $name }}
+{{- if and $svc.hpa $svc.hpa.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ $name }}
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: {{ $name }} }
+  minReplicas: {{ $svc.hpa.min }}
+  maxReplicas: {{ $svc.hpa.max }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target: { type: Utilization, averageUtilization: {{ $svc.hpa.cpu }} }
+{{- end }}
+{{- end }}
